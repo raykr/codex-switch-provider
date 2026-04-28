@@ -13,7 +13,7 @@ source ~/.bashrc
 source ~/.pam_environment
 ```
 
-### 1. Add a new provider to `config.toml`
+### 2. Add a new provider to `config.toml`
 
 ```toml
 model_provider = "0011ai"
@@ -32,7 +32,7 @@ model_provider = "openai"
 model_provider = "0011ai"
 ```
 
-### 2. Switch the provider
+### 3. Switch the provider
 
 Download `codex-switch-provider` and move it to your PATH, for example:
 ```bash
@@ -40,7 +40,7 @@ chmod +x codex-switch-provider
 mv codex-switch-provider ~/.local/bin/
 ```
 
-### 3. Switch the provider
+### 4. Switch the provider
 
 ```bash
 codex-switch-provider 0011ai
