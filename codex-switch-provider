@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: codex-switch-provider <provider>" >&2
+  exit 2
+fi
+
+provider="$1"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+config_path="$codex_home/config.toml"
+state_db="$codex_home/state_5.sqlite"
+backup_root="$codex_home/backups"
+config_backup_dir="$backup_root/config"
+state_backup_dir="$backup_root/state"
+session_backup_dir="$backup_root/session"
+
+if [[ ! -f "$config_path" ]]; then
+  echo "config.toml not found: $config_path" >&2
+  exit 2
+fi
+if [[ ! -f "$state_db" ]]; then
+  echo "state sqlite not found: $state_db" >&2
+  exit 2
+fi
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "sqlite3 not found in PATH" >&2
+  exit 2
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 not found in PATH" >&2
+  exit 2
+fi
+
+if ! rg -n "^\[model_providers\.${provider//./\\.}\]$" "$config_path" >/dev/null; then
+  echo "Warning: provider '$provider' not found under [model_providers.*] in $config_path" >&2
+fi
+
+backup="$config_path.bak.$(date +%Y%m%d-%H%M%S)"
+stamp="$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$config_backup_dir" "$state_backup_dir" "$session_backup_dir"
+backup="$config_backup_dir/config.toml.$stamp.bak"
+cp -a "$config_path" "$backup"
+
+tmp="$(mktemp)"
+awk -v target="$provider" '
+BEGIN { in_root=1; replaced=0; inserted=0 }
+{
+  line=$0
+  if (line ~ /^\s*\[/) {
+    if (in_root && !replaced && !inserted) {
+      print "model_provider = \"" target "\""
+      inserted=1
+    }
+    in_root=0
+    print line
+    next
+  }
+  if (in_root && line ~ /^[[:space:]]*model_provider[[:space:]]*=/) {
+    if (!replaced) {
+      print "model_provider = \"" target "\""
+      replaced=1
+    }
+    next
+  }
+  print line
+}
+END {
+  if (in_root && !replaced && !inserted) {
+    print "model_provider = \"" target "\""
+  }
+}
+' "$config_path" > "$tmp"
+mv "$tmp" "$config_path"
+
+# Sync state_5.sqlite provider bucket.
+cp -a "$state_db" "$state_backup_dir/state_5.sqlite.$stamp.bak"
+for suffix in -wal -shm; do
+  if [[ -f "$state_db$suffix" ]]; then
+    cp -a "$state_db$suffix" "$state_backup_dir/state_5.sqlite.$stamp.bak$suffix"
+  fi
+done
+
+provider_q="$(printf "%s" "$provider" | sed "s/'/''/g")"
+rows_to_update="$(
+  sqlite3 "$state_db" \
+  "SELECT COUNT(*) FROM threads WHERE model_provider != '$provider_q';"
+)"
+if [[ "$rows_to_update" != "0" ]]; then
+  sqlite3 "$state_db" <<EOF
+BEGIN IMMEDIATE;
+UPDATE threads SET model_provider = '$provider_q' WHERE model_provider != '$provider_q';
+COMMIT;
+EOF
+fi
+
+# Sync rollout jsonl session_meta provider.
+export CODEX_SWITCH_PROVIDER="$provider"
+export CODEX_SWITCH_HOME="$codex_home"
+export CODEX_SWITCH_BACKUP="$session_backup_dir/$stamp"
+python3 - <<'PY'
+import json
+import os
+import shutil
+from pathlib import Path
+
+provider = os.environ["CODEX_SWITCH_PROVIDER"]
+home = Path(os.environ["CODEX_SWITCH_HOME"])
+backup_root = Path(os.environ["CODEX_SWITCH_BACKUP"])
+backup_root.mkdir(parents=True, exist_ok=True)
+
+roots = [home / "sessions", home / "archived_sessions"]
+changed = 0
+total = 0
+for root in roots:
+    if not root.exists():
+        continue
+    for path in root.rglob("*.jsonl"):
+        total += 1
+        lines = path.read_text(encoding="utf-8").splitlines()
+        out = []
+        file_changed = False
+        for line in lines:
+            if not line.strip():
+                out.append(line)
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                out.append(line)
+                continue
+            if obj.get("type") == "session_meta" and isinstance(obj.get("payload"), dict):
+                old = obj["payload"].get("model_provider")
+                if old != provider:
+                    obj["payload"]["model_provider"] = provider
+                    file_changed = True
+                line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+            out.append(line)
+        if file_changed:
+            rel = path.relative_to(home)
+            dst = backup_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dst)
+            path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            changed += 1
+print(f"session_files_total={total}")
+print(f"session_files_changed={changed}")
+PY
+
+codex --version && pkill -f 'codex app-server --listen ws://127.0.0.1:9234' || true
+
+echo "Switched provider to '$provider'."
+echo "Config backup: $backup"
+echo "State backup: $state_backup_dir/state_5.sqlite.$stamp.bak"
+echo "Session backup dir: $session_backup_dir/$stamp"
