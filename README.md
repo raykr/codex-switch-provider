@@ -32,6 +32,8 @@ model_provider = "openai"
 model_provider = "0011ai"
 ```
 
+Note: `openai` is the built-in default provider in Codex, so you do not need to add a `[model_providers.openai]` section.
+
 ### 3. Switch the provider
 
 Download `codex-switch-provider` and move it to your PATH, for example:

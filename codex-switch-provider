@@ -32,8 +32,10 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! rg -n "^\[model_providers\.${provider//./\\.}\]$" "$config_path" >/dev/null; then
-  echo "Warning: provider '$provider' not found under [model_providers.*] in $config_path" >&2
+if [[ "$provider" != "openai" ]]; then
+  if ! rg -n "^\[model_providers\.${provider//./\\.}\]$" "$config_path" >/dev/null; then
+    echo "Warning: provider '$provider' not found under [model_providers.*] in $config_path" >&2
+  fi
 fi
 
 backup="$config_path.bak.$(date +%Y%m%d-%H%M%S)"
