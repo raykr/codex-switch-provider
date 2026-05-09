@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage:" >&2
   echo "  codex-switch-provider <provider>" >&2
-  echo "  codex-switch-provider restore" >&2
+  echo "  codex-switch-provider restore [timestamp]" >&2
   echo "  codex-switch-provider list-backups" >&2
 }
 
@@ -40,6 +40,17 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 if [[ "$cmd" == "restore" || "$cmd" == "restore-last" || "$cmd" == "--restore-last" ]]; then
+  if [[ "$cmd" != "restore" && $# -gt 1 ]]; then
+    echo "Timestamp is only supported with 'restore' command." >&2
+    usage
+    exit 2
+  fi
+  if [[ "$cmd" == "restore" && $# -gt 2 ]]; then
+    usage
+    exit 2
+  fi
+
+  target_stamp="${2:-}"
   shopt -s nullglob
   config_backups=( "$config_backup_dir"/config.toml.*.bak )
   shopt -u nullglob
@@ -49,13 +60,21 @@ if [[ "$cmd" == "restore" || "$cmd" == "restore-last" || "$cmd" == "--restore-la
   fi
 
   latest_config_backup=""
-  for f in "${config_backups[@]}"; do
-    latest_config_backup="$f"
-  done
-
-  backup_name="$(basename "$latest_config_backup")"
-  stamp="${backup_name#config.toml.}"
-  stamp="${stamp%.bak}"
+  if [[ -n "$target_stamp" ]]; then
+    latest_config_backup="$config_backup_dir/config.toml.$target_stamp.bak"
+    if [[ ! -f "$latest_config_backup" ]]; then
+      echo "Config backup for stamp '$target_stamp' not found: $latest_config_backup" >&2
+      exit 2
+    fi
+    stamp="$target_stamp"
+  else
+    for f in "${config_backups[@]}"; do
+      latest_config_backup="$f"
+    done
+    backup_name="$(basename "$latest_config_backup")"
+    stamp="${backup_name#config.toml.}"
+    stamp="${stamp%.bak}"
+  fi
 
   latest_state_backup="$state_backup_dir/state_5.sqlite.$stamp.bak"
   latest_session_backup="$session_backup_dir/$stamp"
@@ -119,7 +138,7 @@ print(f"session_files_restored={restored}")
 PY
 
   codex --version && pkill -f 'codex app-server --listen ws://127.0.0.1:9234' || true
-  echo "Restored to last backup stamp '$stamp'."
+  echo "Restored backup stamp '$stamp'."
   echo "Config restored from: $latest_config_backup"
   echo "State restored from: $latest_state_backup"
   echo "Session restored from: $latest_session_backup"

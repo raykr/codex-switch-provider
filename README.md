@@ -56,12 +56,18 @@ codex-switch-provider openai
 
 It will backup the config.toml, state_5.sqlite, and session files, and switch to the new provider, and sync all the chat history to the new provider.
 
-### 5. Restore to the last backup
+### 5. Restore from backup
 
 If you worry a switch caused data loss, you can restore everything to the most recent backup snapshot:
 
 ```bash
 codex-switch-provider restore
+```
+
+Or restore from a specific timestamp (from `list-backups` output):
+
+```bash
+codex-switch-provider restore 20260509-165001
 ```
 
 This restores:
