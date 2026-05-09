@@ -68,3 +68,11 @@ This restores:
 - `config.toml`
 - `state_5.sqlite` (and `-wal`/`-shm` if present)
 - backed-up session files from the same backup timestamp
+
+### 6. List available backup snapshots
+
+```bash
+codex-switch-provider list-backups
+```
+
+This prints backup timestamps and whether each snapshot includes `config`, `state`, and `session`.

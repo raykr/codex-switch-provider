@@ -5,6 +5,7 @@ usage() {
   echo "Usage:" >&2
   echo "  codex-switch-provider <provider>" >&2
   echo "  codex-switch-provider restore" >&2
+  echo "  codex-switch-provider list-backups" >&2
 }
 
 if [[ $# -lt 1 ]]; then
@@ -123,6 +124,36 @@ PY
   echo "State restored from: $latest_state_backup"
   echo "Session restored from: $latest_session_backup"
   echo "Pre-restore backup stamp: $restore_stamp.pre_restore"
+  exit 0
+fi
+
+if [[ "$cmd" == "list-backups" || "$cmd" == "--list-backups" ]]; then
+  mkdir -p "$config_backup_dir" "$state_backup_dir" "$session_backup_dir"
+  shopt -s nullglob
+  config_backups=( "$config_backup_dir"/config.toml.*.bak )
+  shopt -u nullglob
+
+  if [[ ${#config_backups[@]} -eq 0 ]]; then
+    echo "No backups found."
+    exit 0
+  fi
+
+  total=0
+  echo "Available backup snapshots (newest last):"
+  for f in "${config_backups[@]}"; do
+    name="$(basename "$f")"
+    stamp="${name#config.toml.}"
+    stamp="${stamp%.bak}"
+
+    has_state="no"
+    has_session="no"
+    [[ -f "$state_backup_dir/state_5.sqlite.$stamp.bak" ]] && has_state="yes"
+    [[ -d "$session_backup_dir/$stamp" ]] && has_session="yes"
+
+    printf -- "- %s | config: yes | state: %s | session: %s\n" "$stamp" "$has_state" "$has_session"
+    total=$((total + 1))
+  done
+  echo "Total snapshots: $total"
   exit 0
 fi
 
