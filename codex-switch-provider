@@ -8,6 +8,21 @@ usage() {
   echo "  codex-switch-provider list-backups" >&2
 }
 
+restart_app_server() {
+  local app_server_control_dir="$codex_home/app-server-control"
+  local app_server_log="$app_server_control_dir/app-server.log"
+
+  # Clear stale proxy/listen processes so remote clients reload fresh state.
+  pkill -f 'codex app-server proxy' >/dev/null 2>&1 || true
+  pkill -f 'codex app-server --listen unix://' >/dev/null 2>&1 || true
+  rm -f "$app_server_control_dir/app-server-control.sock"
+
+  umask 077
+  mkdir -p "$app_server_control_dir"
+  nohup codex app-server --listen unix:// >"$app_server_log" 2>&1 &
+  sleep 1
+}
+
 if [[ $# -lt 1 ]]; then
   usage
   exit 2
@@ -137,12 +152,14 @@ for src in snapshot.rglob("*"):
 print(f"session_files_restored={restored}")
 PY
 
-  codex --version && pkill -f 'codex app-server --listen ws://127.0.0.1:9234' || true
+  codex --version
+  restart_app_server
   echo "Restored backup stamp '$stamp'."
   echo "Config restored from: $latest_config_backup"
   echo "State restored from: $latest_state_backup"
   echo "Session restored from: $latest_session_backup"
   echo "Pre-restore backup stamp: $restore_stamp.pre_restore"
+  echo "App server cache reset: done (unix:// restarted)"
   exit 0
 fi
 
@@ -294,9 +311,11 @@ print(f"session_files_total={total}")
 print(f"session_files_changed={changed}")
 PY
 
-codex --version && pkill -f 'codex app-server --listen ws://127.0.0.1:9234' || true
+codex --version
+restart_app_server
 
 echo "Switched provider to '$provider'."
 echo "Config backup: $backup"
 echo "State backup: $state_backup_dir/state_5.sqlite.$stamp.bak"
 echo "Session backup dir: $session_backup_dir/$stamp"
+echo "App server cache reset: done (unix:// restarted)"
