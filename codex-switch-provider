@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  echo "Usage:" >&2
+  echo "  codex-switch-provider <provider>" >&2
+  echo "  codex-switch-provider restore" >&2
+}
+
 if [[ $# -lt 1 ]]; then
-  echo "Usage: codex-switch-provider <provider>" >&2
+  usage
   exit 2
 fi
 
-provider="$1"
+cmd="$1"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 config_path="$codex_home/config.toml"
 state_db="$codex_home/state_5.sqlite"
@@ -32,6 +38,95 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
+if [[ "$cmd" == "restore" || "$cmd" == "restore-last" || "$cmd" == "--restore-last" ]]; then
+  shopt -s nullglob
+  config_backups=( "$config_backup_dir"/config.toml.*.bak )
+  shopt -u nullglob
+  if [[ ${#config_backups[@]} -eq 0 ]]; then
+    echo "No config backup found in $config_backup_dir" >&2
+    exit 2
+  fi
+
+  latest_config_backup=""
+  for f in "${config_backups[@]}"; do
+    latest_config_backup="$f"
+  done
+
+  backup_name="$(basename "$latest_config_backup")"
+  stamp="${backup_name#config.toml.}"
+  stamp="${stamp%.bak}"
+
+  latest_state_backup="$state_backup_dir/state_5.sqlite.$stamp.bak"
+  latest_session_backup="$session_backup_dir/$stamp"
+
+  if [[ ! -f "$latest_state_backup" ]]; then
+    echo "State backup for stamp '$stamp' not found: $latest_state_backup" >&2
+    exit 2
+  fi
+
+  restore_stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$config_backup_dir" "$state_backup_dir" "$session_backup_dir/$restore_stamp.pre_restore"
+  cp -a "$config_path" "$config_backup_dir/config.toml.$restore_stamp.pre_restore.bak"
+  cp -a "$state_db" "$state_backup_dir/state_5.sqlite.$restore_stamp.pre_restore.bak"
+  for suffix in -wal -shm; do
+    if [[ -f "$state_db$suffix" ]]; then
+      cp -a "$state_db$suffix" "$state_backup_dir/state_5.sqlite.$restore_stamp.pre_restore.bak$suffix"
+    fi
+  done
+
+  cp -a "$latest_config_backup" "$config_path"
+  cp -a "$latest_state_backup" "$state_db"
+  for suffix in -wal -shm; do
+    if [[ -f "$latest_state_backup$suffix" ]]; then
+      cp -a "$latest_state_backup$suffix" "$state_db$suffix"
+    else
+      rm -f "$state_db$suffix"
+    fi
+  done
+
+  export CODEX_SWITCH_HOME="$codex_home"
+  export CODEX_SWITCH_RESTORE_SNAPSHOT="$latest_session_backup"
+  export CODEX_SWITCH_PRE_RESTORE="$session_backup_dir/$restore_stamp.pre_restore"
+  python3 - <<'PY'
+import shutil
+import os
+from pathlib import Path
+
+home = Path(os.environ["CODEX_SWITCH_HOME"])
+snapshot = Path(os.environ["CODEX_SWITCH_RESTORE_SNAPSHOT"])
+pre_restore = Path(os.environ["CODEX_SWITCH_PRE_RESTORE"])
+restored = 0
+
+if not snapshot.exists():
+    print(f"session_snapshot_missing={snapshot}")
+    raise SystemExit(0)
+
+for src in snapshot.rglob("*"):
+    if not src.is_file():
+        continue
+    rel = src.relative_to(snapshot)
+    dst = home / rel
+    if dst.exists():
+        backup_dst = pre_restore / rel
+        backup_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dst, backup_dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    restored += 1
+
+print(f"session_files_restored={restored}")
+PY
+
+  codex --version && pkill -f 'codex app-server --listen ws://127.0.0.1:9234' || true
+  echo "Restored to last backup stamp '$stamp'."
+  echo "Config restored from: $latest_config_backup"
+  echo "State restored from: $latest_state_backup"
+  echo "Session restored from: $latest_session_backup"
+  echo "Pre-restore backup stamp: $restore_stamp.pre_restore"
+  exit 0
+fi
+
+provider="$cmd"
 if [[ "$provider" != "openai" ]]; then
   if ! rg -n "^\[model_providers\.${provider//./\\.}\]$" "$config_path" >/dev/null; then
     echo "Warning: provider '$provider' not found under [model_providers.*] in $config_path" >&2
