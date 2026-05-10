@@ -7,6 +7,7 @@ usage() {
   echo "    仅 provider：改写 model_provider，并按 provider 使用默认 model（deepseek→deepseek-v4-pro，moonshot→kimi-k2.6，其它→gpt-5.4）。" >&2
   echo "    provider + model：同时改写 model_provider 与 model。" >&2
   echo "  x-switch restart           # 仅重启 codex app-server（unix://）" >&2
+  echo "  x-switch restart relay     # 重启 codex-relay（deepseek 4446 / moonshot 4447，后台 + 日志）" >&2
   echo "  x-switch restore [timestamp]" >&2
   echo "  x-switch list-backups" >&2
   echo "" >&2
@@ -37,6 +38,43 @@ restart_app_server() {
   sleep 1
 }
 
+restart_codex_relays() {
+  local relay_dir="$codex_home/relay"
+  local log_deep="$relay_dir/codex-relay-deepseek.log"
+  local log_moon="$relay_dir/codex-relay-moonshot.log"
+
+  pkill -f 'codex-relay' >/dev/null 2>&1 || true
+
+  if ! command -v codex-relay >/dev/null 2>&1; then
+    echo "codex-relay not found in PATH" >&2
+    exit 2
+  fi
+
+  umask 077
+  mkdir -p "$relay_dir"
+
+  if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
+    echo "Warning: DEEPSEEK_API_KEY is empty" >&2
+  fi
+  if [[ -z "${MOONSHOT_API_KEY:-}" ]]; then
+    echo "Warning: MOONSHOT_API_KEY is empty" >&2
+  fi
+
+  nohup env \
+    CODEX_RELAY_UPSTREAM="https://api.deepseek.com/v1" \
+    CODEX_RELAY_API_KEY="${DEEPSEEK_API_KEY:-}" \
+    CODEX_RELAY_PORT=4446 \
+    codex-relay >"$log_deep" 2>&1 &
+  nohup env \
+    CODEX_RELAY_UPSTREAM="https://api.moonshot.cn/v1" \
+    CODEX_RELAY_API_KEY="${MOONSHOT_API_KEY:-}" \
+    CODEX_RELAY_PORT=4447 \
+    codex-relay >"$log_moon" 2>&1 &
+  sleep 1
+  echo "codex-relay (deepseek): 后台运行, port=4446, log=$log_deep"
+  echo "codex-relay (moonshot): 后台运行, port=4447, log=$log_moon"
+}
+
 if [[ $# -lt 1 ]]; then
   usage
   exit 2
@@ -44,15 +82,19 @@ fi
 
 cmd="$1"
 if [[ "$cmd" == "restart" ]]; then
-  if [[ $# -ge 2 ]]; then
-    echo "用法: x-switch restart（不接受其它参数）" >&2
-    exit 2
-  fi
   codex_home="${CODEX_HOME:-$HOME/.codex}"
-  restart_app_server
-  codex --version
-  echo "App server cache reset: done (unix:// restarted)"
-  exit 0
+  if [[ $# -eq 1 ]]; then
+    restart_app_server
+    codex --version
+    echo "App server cache reset: done (unix:// restarted)"
+    exit 0
+  fi
+  if [[ $# -eq 2 && "${2:-}" == "relay" ]]; then
+    restart_codex_relays
+    exit 0
+  fi
+  echo "用法: x-switch restart  |  x-switch restart relay" >&2
+  exit 2
 fi
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
