@@ -3,12 +3,23 @@ set -euo pipefail
 
 usage() {
   echo "Usage:" >&2
-  echo "  x-switch <provider>" >&2
+  echo "  x-switch <provider> [model]" >&2
+  echo "    仅 provider：改写 model_provider，并按 provider 使用默认 model（deepseek→deepseek-v4-pro，moonshot→kimi-k2.6，其它→gpt-5.4）。" >&2
+  echo "    provider + model：同时改写 model_provider 与 model。" >&2
   echo "  x-switch restart           # 仅重启 codex app-server（unix://）" >&2
   echo "  x-switch restore [timestamp]" >&2
   echo "  x-switch list-backups" >&2
   echo "" >&2
-  echo "各 provider 的 model / base_url / 密钥请在 ~/.codex/config.toml 自行维护。" >&2
+  echo "各 provider 的 base_url / 密钥请在 ~/.codex/config.toml 自行维护。" >&2
+}
+
+# 单参数切换时使用的默认 model（第二参数可显式覆盖）。
+default_model_for_provider() {
+  case "$1" in
+    deepseek) echo "deepseek-v4-pro" ;;
+    moonshot) echo "kimi-k2.6" ;;
+    *) echo "gpt-5.4" ;;
+  esac
 }
 
 restart_app_server() {
@@ -208,7 +219,15 @@ if [[ "$cmd" == "list-backups" || "$cmd" == "--list-backups" ]]; then
   exit 0
 fi
 
+if [[ $# -gt 2 ]]; then
+  echo "参数过多：切换 provider 请使用「x-switch <provider>」或「x-switch <provider> <model>」。" >&2
+  usage
+  exit 2
+fi
+
 provider="$cmd"
+explicit_model="${2:-}"
+
 if [[ "$provider" != "openai" ]]; then
   if ! rg -n "^\[model_providers\.${provider//./\\.}\]$" "$config_path" >/dev/null; then
     echo "Warning: provider '$provider' not found under [model_providers.*] in $config_path" >&2
@@ -220,20 +239,11 @@ mkdir -p "$config_backup_dir" "$state_backup_dir" "$session_backup_dir"
 backup="$config_backup_dir/config.toml.$stamp.bak"
 cp -a "$config_path" "$backup"
 
-old_model=""
-old_model="$(
-  awk '/^\[/ { exit }
-    /^[[:space:]]*model[[:space:]]*=/ {
-      line=$0
-      sub(/^[[:space:]]*model[[:space:]]*=[[:space:]]*/, "", line)
-      gsub(/^"|"$/, "", line)
-      print line
-      exit
-    }' "$backup"
-)"
-
-fallback_model="${CODEX_SWITCH_FALLBACK_MODEL:-gpt-5.5}"
-new_model="${old_model:-$fallback_model}"
+if [[ -n "$explicit_model" ]]; then
+  new_model="$explicit_model"
+else
+  new_model="$(default_model_for_provider "$provider")"
+fi
 
 new_model_q="$(printf "%s" "$new_model" | sed "s/'/''/g")"
 
