@@ -3,9 +3,12 @@ set -euo pipefail
 
 usage() {
   echo "Usage:" >&2
-  echo "  codex-switch-provider <provider>" >&2
-  echo "  codex-switch-provider restore [timestamp]" >&2
-  echo "  codex-switch-provider list-backups" >&2
+  echo "  x-switch <provider>" >&2
+  echo "  x-switch restart           # 仅重启 codex app-server（unix://）" >&2
+  echo "  x-switch restore [timestamp]" >&2
+  echo "  x-switch list-backups" >&2
+  echo "" >&2
+  echo "各 provider 的 model / base_url / 密钥请在 ~/.codex/config.toml 自行维护。" >&2
 }
 
 restart_app_server() {
@@ -29,6 +32,18 @@ if [[ $# -lt 1 ]]; then
 fi
 
 cmd="$1"
+if [[ "$cmd" == "restart" ]]; then
+  if [[ $# -ge 2 ]]; then
+    echo "用法: x-switch restart（不接受其它参数）" >&2
+    exit 2
+  fi
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  restart_app_server
+  codex --version
+  echo "App server cache reset: done (unix:// restarted)"
+  exit 0
+fi
+
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 config_path="$codex_home/config.toml"
 state_db="$codex_home/state_5.sqlite"
@@ -200,24 +215,51 @@ if [[ "$provider" != "openai" ]]; then
   fi
 fi
 
-backup="$config_path.bak.$(date +%Y%m%d-%H%M%S)"
 stamp="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$config_backup_dir" "$state_backup_dir" "$session_backup_dir"
 backup="$config_backup_dir/config.toml.$stamp.bak"
 cp -a "$config_path" "$backup"
 
+old_model=""
+old_model="$(
+  awk '/^\[/ { exit }
+    /^[[:space:]]*model[[:space:]]*=/ {
+      line=$0
+      sub(/^[[:space:]]*model[[:space:]]*=[[:space:]]*/, "", line)
+      gsub(/^"|"$/, "", line)
+      print line
+      exit
+    }' "$backup"
+)"
+
+fallback_model="${CODEX_SWITCH_FALLBACK_MODEL:-gpt-5.5}"
+new_model="${old_model:-$fallback_model}"
+
+new_model_q="$(printf "%s" "$new_model" | sed "s/'/''/g")"
+
 tmp="$(mktemp)"
-awk -v target="$provider" '
-BEGIN { in_root=1; replaced=0; inserted=0 }
+awk -v target="$provider" -v new_model="$new_model" '
+BEGIN { in_root=1; replaced=0; inserted=0; replaced_model=0; inserted_model=0 }
 {
   line=$0
   if (line ~ /^\s*\[/) {
+    if (in_root && !replaced_model && !inserted_model) {
+      print "model = \"" new_model "\""
+      inserted_model=1
+    }
     if (in_root && !replaced && !inserted) {
       print "model_provider = \"" target "\""
       inserted=1
     }
     in_root=0
     print line
+    next
+  }
+  if (in_root && line ~ /^[[:space:]]*model[[:space:]]*=/) {
+    if (!replaced_model) {
+      print "model = \"" new_model "\""
+      replaced_model=1
+    }
     next
   }
   if (in_root && line ~ /^[[:space:]]*model_provider[[:space:]]*=/) {
@@ -230,6 +272,9 @@ BEGIN { in_root=1; replaced=0; inserted=0 }
   print line
 }
 END {
+  if (in_root && !replaced_model && !inserted_model) {
+    print "model = \"" new_model "\""
+  }
   if (in_root && !replaced && !inserted) {
     print "model_provider = \"" target "\""
   }
@@ -248,12 +293,12 @@ done
 provider_q="$(printf "%s" "$provider" | sed "s/'/''/g")"
 rows_to_update="$(
   sqlite3 "$state_db" \
-  "SELECT COUNT(*) FROM threads WHERE model_provider != '$provider_q';"
+  "SELECT COUNT(*) FROM threads WHERE model_provider != '$provider_q' OR IFNULL(model, '') != '$new_model_q';"
 )"
 if [[ "$rows_to_update" != "0" ]]; then
   sqlite3 "$state_db" <<EOF
 BEGIN IMMEDIATE;
-UPDATE threads SET model_provider = '$provider_q' WHERE model_provider != '$provider_q';
+UPDATE threads SET model_provider = '$provider_q', model = '$new_model_q' WHERE model_provider != '$provider_q' OR IFNULL(model, '') != '$new_model_q';
 COMMIT;
 EOF
 fi
@@ -314,7 +359,7 @@ PY
 codex --version
 restart_app_server
 
-echo "Switched provider to '$provider'."
+echo "Switched provider to '$provider' (model='$new_model')."
 echo "Config backup: $backup"
 echo "State backup: $state_backup_dir/state_5.sqlite.$stamp.bak"
 echo "Session backup dir: $session_backup_dir/$stamp"

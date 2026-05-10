@@ -1,6 +1,8 @@
-# Codex Switch Provider
+# x-switch (Codex provider 切换)
 
-This is a simple script to switch the provider of the Codex CLI, and sync the chat history among different providers.
+主命令名为 **`x-switch`**，仓库内脚本文件名也是 `x-switch`。
+
+用于切换 Codex CLI 的 provider，并在不同 provider 之间同步会话与本地状态。
 
 ## Usage
 
@@ -36,22 +38,22 @@ Note: `openai` is the built-in default provider in Codex, so you do not need to 
 
 ### 3. Switch the provider
 
-Download `codex-switch-provider` and move it to your PATH, for example:
+Download `x-switch` and move it to your PATH, for example:
 ```bash
-chmod +x codex-switch-provider
-mv codex-switch-provider ~/.local/bin/
+chmod +x x-switch
+mv x-switch ~/.local/bin/
 ```
 
 ### 4. Switch the provider
 
 ```bash
-codex-switch-provider 0011ai
+x-switch 0011ai
 ```
 
 or change to original provider
 
 ```bash
-codex-switch-provider openai
+x-switch openai
 ```
 
 It will backup the config.toml, state_5.sqlite, and session files, and switch to the new provider, and sync all the chat history to the new provider.
@@ -61,13 +63,13 @@ It will backup the config.toml, state_5.sqlite, and session files, and switch to
 If you worry a switch caused data loss, you can restore everything to the most recent backup snapshot:
 
 ```bash
-codex-switch-provider restore
+x-switch restore
 ```
 
 Or restore from a specific timestamp (from `list-backups` output):
 
 ```bash
-codex-switch-provider restore 20260509-165001
+x-switch restore 20260509-165001
 ```
 
 This restores:
@@ -78,7 +80,7 @@ This restores:
 ### 6. List available backup snapshots
 
 ```bash
-codex-switch-provider list-backups
+x-switch list-backups
 ```
 
 This prints backup timestamps and whether each snapshot includes `config`, `state`, and `session`.
