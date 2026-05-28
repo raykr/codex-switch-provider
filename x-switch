@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage:" >&2
   echo "  x-switch <provider> [model]" >&2
-  echo "    仅 provider：改写 model_provider，并按 provider 使用默认 model（deepseek→deepseek-v4-pro，moonshot→kimi-k2.6，其它→gpt-5.4）。" >&2
+  echo "    仅 provider：改写 model_provider，并按 provider 使用默认 model（deepseek→deepseek-v4-pro，moonshot→kimi-k2.6，其它→gpt-5.5）。" >&2
   echo "    provider + model：同时改写 model_provider 与 model。" >&2
   echo "  x-switch restart           # 仅重启 codex app-server（unix://）" >&2
   echo "  x-switch restart relay     # 重启 codex-relay（deepseek 4446 / moonshot 4447，后台 + 日志）" >&2
@@ -19,7 +19,7 @@ default_model_for_provider() {
   case "$1" in
     deepseek) echo "deepseek-v4-pro" ;;
     moonshot) echo "kimi-k2.6" ;;
-    *) echo "gpt-5.4" ;;
+    *) echo "gpt-5.5" ;;
   esac
 }
 
